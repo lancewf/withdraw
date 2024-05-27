@@ -46,11 +46,17 @@ class Account:
         return 0.0
 
     def withdraw_by_year(self, year: int) -> float:
-        return self.withdrawn_per_year.get(year, 0.0)
+        w = self.withdrawn_per_year.get(year, 0.0)
+        return w if w >= 0.0 else 0.0
 
     def add(self, amount: float, year: int):
         self.added_per_year[year] = amount
         self.amount += amount
+        withdrawn = self.withdrawn_per_year.get(year, 0)
+        if withdrawn - amount <= 0:
+            self.withdrawn_per_year[year] = 0
+        else:
+            self.withdrawn_per_year[year] -= amount
 
     def withdraw(self, withdraw_amount: float, year: int) -> float:
         if withdraw_amount < 0.0:
@@ -89,6 +95,85 @@ class Taxable(Account):
 
     def cap_taxable_income(self, year: int) -> float:
         return self.withdraw_by_year(year) * 0.60
+
+
+class TaxableWithBasis:
+
+    def __init__(self, name: str, amount_basis: float, amount_gains: float, inflate_percent: float, start_year: int, start_month: int):
+        self.amount_basis = float(amount_basis)
+        self.amount_gains = float(amount_gains)
+        self.name = str(name)
+        self.inflate_percent = inflate_percent
+        self.date = start_year * 12 + (start_month - 1)
+        self.withdrawn_per_year = {}
+        self.added_per_year = {}
+        self.inflate_percent_by_year = {}
+
+    def _total_amount(self):
+        return self.amount_basis + self.amount_gains
+
+    def __str__(self) -> str:
+        return f"{self.name}: ${self._total_amount():,.2f}"
+
+    def csv_header(self) -> str:
+        return f";{self.name}-basis;{self.name}-gains;{self.name}-total;{self.name}-pay"
+
+    def csv_values(self, year: int) -> str:
+        return f";${self.amount_basis:,.2f};${self.amount_gains:,.2f};${self._total_amount():,.2f};${self.withdraw_by_year(year) -  self.added_per_year.get(year, 0):,.2f}"
+
+    def increase(self, year: int, month: int):
+        current_date = year * 12 + (month - 1)
+        while self.date < current_date:
+            self.amount_gains += self._total_amount() * _compound_monthly_interest(self._inflate_percent(year))
+            self.date += 1
+
+    def set_inflate_percent_by_year(self, inflate_percent_by_year):
+        self.inflate_percent_by_year = inflate_percent_by_year
+
+    def _inflate_percent(self, year):
+        return self.inflate_percent_by_year.get(year, self.inflate_percent)
+
+    def taxable_income(self, year: int) -> float:
+        return 0.0
+
+    def cap_taxable_income(self, year: int) -> float:
+        if self.withdraw_by_year(year) > 0 and self._total_amount() > 0:
+            percentage_gains = self.amount_gains / (self.amount_basis + self.amount_gains)
+            return self.withdraw_by_year(year) * percentage_gains
+        else:
+            return 0
+
+    def withdraw_by_year(self, year: int) -> float:
+        w = self.withdrawn_per_year.get(year, 0.0)
+        return w if w >= 0.0 else 0.0
+
+    def add(self, amount: float, year: int):
+        self.added_per_year[year] = amount
+        self.amount_basis += amount
+        withdrawn = self.withdrawn_per_year.get(year, 0)
+        if withdrawn - amount <= 0:
+            self.withdrawn_per_year[year] = 0
+        else:
+            self.withdrawn_per_year[year] -= amount
+
+    def withdraw(self, withdraw_amount: float, year: int) -> float:
+        if withdraw_amount < 0.0:
+            raise Exception(f"can not withdraw negative amounts: withdraw_amount: ${withdraw_amount:,.2f}")
+        if withdraw_amount > self._total_amount():
+            left_over = withdraw_amount - self._total_amount()
+            self.amount_basis = 0
+            self.amount_gains = 0
+            self.withdrawn_per_year[year] = (withdraw_amount - left_over) + self.withdrawn_per_year.get(year, 0)
+            return left_over
+        else:
+            percentage_gains = self.amount_gains/(self.amount_basis + self.amount_gains)
+            self.amount_gains -= percentage_gains * withdraw_amount
+            self.amount_basis -= (1 - percentage_gains) * withdraw_amount
+            self.withdrawn_per_year[year] = withdraw_amount + self.withdrawn_per_year.get(year, 0)
+            return 0.0
+
+    def total_taxable_pension_payments(self, amount: float, year: int):
+        pass
 
 
 class RMD(object):
@@ -151,13 +236,15 @@ class PostTax401kRateLimit(object):
     def __init__(self, name: str, accounts: List[PostTax401k],
                  income_tax_brackets: tax_bracket.TaxBracketCollection,
                  standard_deductions: StandardDeductions,
-                 max_tax_percent: float = 0.15):
+                 max_tax_percent: float = 0.15,
+                 percent_over_max: float = 0.3):
         self.name = name
         self.accounts = accounts
         self.income_tax_brackets = income_tax_brackets
         self.max_tax_percent = max_tax_percent
         self.standard_deductions = standard_deductions
         self.pension_payment_by_year = {}
+        self.percent_over_max = percent_over_max
 
     def csv_header(self) -> str:
         output = ""
@@ -214,6 +301,7 @@ class PostTax401kRateLimit(object):
         max_low_tax_bracket = self._max_low_tax_bracket()
         already_withdraw = self.withdrawn_per_year(year)
         max_amount_to_withdraw = max_low_tax_bracket + self.standard_deductions.amount
+        max_amount_to_withdraw = max_amount_to_withdraw * (1 + self.percent_over_max)
         total_taxable_income = already_withdraw + self.pension_payment_by_year.get(year, 0)
 
         left_over = self._withdraw_rmd(withdraw_amount, year)

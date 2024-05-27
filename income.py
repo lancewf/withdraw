@@ -30,6 +30,7 @@ class FixedPensionIncome(Income):
         self.withdrawn_per_year = {}
         self.min_year = min_year
         self.year = start_year
+        self.inflate_percent_by_year = {}
 
     def csv_header(self) -> str:
         return ";" + self.name
@@ -45,8 +46,14 @@ class FixedPensionIncome(Income):
 
     def inflate(self, year: int):
         while self.year < year:
-            self.monthly_payment *= (1.0 + self.inflate_percent)
+            self.monthly_payment *= (1.0 + self._inflate_percent(year))
             self.year += 1
+
+    def set_inflate_percent_by_year(self, inflate_percent_by_year):
+        self.inflate_percent_by_year = inflate_percent_by_year
+
+    def _inflate_percent(self, year):
+        return self.inflate_percent_by_year.get(year, self.inflate_percent)
 
     def taxable_income(self, year: int) -> float:
         return self.withdrawn_per_year.get(year, 0.0)
@@ -58,7 +65,7 @@ class FixedPensionIncome(Income):
         future_year = self.year
         while future_year < year:
             future_year += 1
-            future_monthly_payment *= (1.0 + self.inflate_percent)
+            future_monthly_payment *= (1.0 + self._inflate_percent(year))
         return future_monthly_payment * 12
 
 
@@ -147,3 +154,10 @@ class PostTax401ksAsPension(Income):
 
     def predicted_yearly_taxable_income(self, year: int) -> float:
         return max(self._max_low_tax_bracket(), self.required_yearly_withdraw(year))
+
+
+class LumpSumPayment(object):
+
+    def __init__(self, amount: float, year: int):
+        self.amount = amount
+        self.year = year

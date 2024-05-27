@@ -1,4 +1,5 @@
 from typing import List
+from typing import Dict
 
 
 class TaxBracket(object):
@@ -11,10 +12,10 @@ class TaxBracket(object):
 
 
 class TaxBracketCollection(object):
-    def __init__(self, brackets: List[TaxBracket], year: int, inflate_percent: float):
+    def __init__(self, brackets: List[TaxBracket], year: int, inflate_percent_by_year: Dict[int, float]):
         self.brackets = brackets
         self.year = year
-        self.inflate_percent = inflate_percent
+        self.inflate_percent_by_year = inflate_percent_by_year
 
     def csv_header(self) -> str:
         output = ""
@@ -42,10 +43,10 @@ class TaxBracketCollection(object):
         while self.year < year:
             self.year += 1
             for bracket in self.brackets:
-                bracket.inflate(self.inflate_percent)
+                bracket.inflate(self.inflate_percent_by_year[year])
 
 
-def build_current_income_tax_brackets(inflate_percent: float) -> TaxBracketCollection:
+def build_current_income_tax_brackets(inflation_percent_by_year: Dict[int, float]) -> TaxBracketCollection:
     brackets = [
         TaxBracket(22000.0, 0.10),
         TaxBracket(89450.0, 0.12),
@@ -55,13 +56,13 @@ def build_current_income_tax_brackets(inflate_percent: float) -> TaxBracketColle
         TaxBracket(693750.0, 0.35),
         TaxBracket(float("inf"), 0.37)
     ]
-    return TaxBracketCollection(brackets=brackets, year=2023, inflate_percent=inflate_percent)
+    return TaxBracketCollection(brackets=brackets, year=2023, inflate_percent_by_year=inflation_percent_by_year)
 
 
-def build_current_cap_gains_tax_brackets(inflate_percent: float) -> TaxBracketCollection:
+def build_current_cap_gains_tax_brackets(inflation_percent_by_year: Dict[int, float]) -> TaxBracketCollection:
     brackets = [
         TaxBracket( 89450, 0.0),
         TaxBracket(517200, 0.15),
     ]
-    return TaxBracketCollection(brackets=brackets, year=2023, inflate_percent=inflate_percent)
+    return TaxBracketCollection(brackets=brackets, year=2023, inflate_percent_by_year=inflation_percent_by_year)
 
