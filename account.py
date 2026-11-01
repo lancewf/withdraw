@@ -1,7 +1,9 @@
 import tax_bracket
 from typing import List
 from tax_deductions import StandardDeductions
+from expenses import Expenses
 
+from collections import defaultdict
 
 def _compound_monthly_interest(annual_rate):
     return (1 + annual_rate) ** (1 / 12) - 1
@@ -17,6 +19,9 @@ class Account:
         self.withdrawn_per_year = {}
         self.added_per_year = {}
         self.inflate_percent_by_year = {}
+
+    def total_amount(self):
+        return self.amount
 
     def __str__(self) -> str:
         return f"{self.name}: ${self.amount:,.2f}"
@@ -96,6 +101,215 @@ class Taxable(Account):
     def cap_taxable_income(self, year: int) -> float:
         return self.withdraw_by_year(year) * 0.60
 
+"""
+[ 
+  year 0, - current year
+  year 1, - next year
+  year 2, - 2 year ahead
+  year 3, - 3 year ahead
+  year 4, - 4 years ahead
+]
+"""
+class Bond:
+    def __init__(self, amount: float, rate: float, year: int):
+        self.amount = amount
+        self.rate = rate
+        self.year = year
+
+    def is_mature(self, year: int) -> bool:
+        return year == self.year
+
+    def monthly_payment(self, year: int) -> float:
+        return self.amount * self.rate/12
+
+    def taxable_income(self, year: int) -> float:
+        return self.amount * self.rate
+
+class FiveYearBondLadder:
+    def __init__(self, inflate_percent_by_year, five_year_note_rate_by_year, expenses: Expenses, tbills_amount: float,
+                 bonds: [Bond] = []):
+        self.expenses = expenses
+        self.tbills_amount = tbills_amount
+        self.bonds = bonds
+        self.withdrawn_per_year = defaultdict(lambda: 0.0)
+        self.inflate_percent_by_year = inflate_percent_by_year
+        self.five_year_note_rate_by_year = five_year_note_rate_by_year
+        self.taxable_income_per_year = defaultdict(lambda: 0.0)
+
+    def __str__(self) -> str:
+        return f"Bonds: ${self.total_amount:,.2f}"
+
+    def _inflate_percent(self, year):
+        if self.inflate_percent_by_year[year] > 0.0:
+            return self.inflate_percent_by_year[year]
+        return 0.0
+
+    def _bond_desired_amount(self, year:int) -> float:
+        return self.expenses.amount(year) / 8
+
+    def _tbill_desired_amount(self, year:int) -> float:
+        return self.expenses.amount(year) * 2
+
+    def _mature_bonds_amount(self, year:int) -> float:
+        amount = 0
+        for bond in self.bonds:
+            if bond.is_mature(year):
+                amount += bond.amount
+
+        return amount
+
+    def missing_amount(self, year: int) -> float:
+        amount = 0.0
+        if self.tbills_amount < self._tbill_desired_amount(year):
+            amount += self._tbill_desired_amount(year) - self.tbills_amount
+
+        if self.five_year_note_rate_by_year[year] > 0.04:
+            if self._mature_bonds_amount(year) < self._bond_desired_amount(year):
+                amount += self._bond_desired_amount(year) - self._mature_bonds_amount(year)
+
+        # cap it at half income_needed
+        if amount > self.expenses.amount(year) /8:
+            return self.expenses.amount(year) /8
+
+        return amount
+
+    def total_amount(self):
+        amount = 0
+        for bond in self.bonds:
+            amount += bond.amount
+
+        amount += self.tbills_amount
+        return amount
+
+    def lump_sum_payments(self, year):
+        '''
+        Do not rebuy bonds when the rate is low.
+        :param year: current year
+        :return: the amount of mature bonds
+        '''
+
+        amount = 0.0
+        if self.five_year_note_rate_by_year[year] < 0.04:
+            for bond in self.bonds:
+                if bond.is_mature(year):
+                    amount += bond.amount
+
+            self.bonds = [b for b in self.bonds if not b.is_mature(year)]
+
+        self.withdrawn_per_year[year] += amount
+        return amount
+
+    def add(self, amount: float, year: int):
+        def add_to_bond(amount: float) -> float:
+            left_over = amount
+            if self._mature_bonds_amount(year) < self._bond_desired_amount(year):
+                if self._bond_desired_amount(year) - self._mature_bonds_amount(year) < left_over:
+                    new_bond_amount = self._bond_desired_amount(year) - self._mature_bonds_amount(year)
+                    new_bond = Bond(new_bond_amount, self.five_year_note_rate_by_year[year], year + 5)
+                    self.bonds.append(new_bond)
+                    left_over -= new_bond_amount
+                else:
+                    new_bond = Bond(left_over, self.five_year_note_rate_by_year[year], year + 5)
+                    self.bonds.append(new_bond)
+                    left_over = 0
+
+            return left_over
+
+        left_over = amount
+        if self.tbills_amount < self._tbill_desired_amount(year):
+            if self._tbill_desired_amount(year) - self.tbills_amount < left_over:
+                left_over -= self._tbill_desired_amount(year) - self.tbills_amount
+                self.tbills_amount += self._tbill_desired_amount(year) - self.tbills_amount
+            else:
+                self.tbills_amount += left_over
+                left_over = 0
+
+        if left_over > 0:
+            left_over = add_to_bond(left_over)
+
+        self.tbills_amount += left_over
+
+    def increase(self, year, month):
+        pass
+
+    def cap_taxable_income(self, year):
+        return 0.0
+
+    def withdraw(self, withdraw_amount: float, year: int):
+        if withdraw_amount < 0.0:
+            raise Exception(f"can not withdraw negative amounts: withdraw_amount: ${withdraw_amount:,.2f}")
+        if withdraw_amount > self.tbills_amount + self._mature_bonds_amount(year):
+            left_over = withdraw_amount - (self.tbills_amount + self._mature_bonds_amount(year))
+            self.tbills_amount = 0
+            self.bonds = [b for b in self.bonds if b.year != year]
+            self.withdrawn_per_year[year] += (withdraw_amount - left_over)
+            return left_over
+        else:
+            if withdraw_amount > self._mature_bonds_amount(year):
+                left_over = withdraw_amount - self._mature_bonds_amount(year)
+                self.bonds = [b for b in self.bonds if b.year != year]
+                self.tbills_amount -= left_over
+                left_over = 0
+            else:
+                left_over = withdraw_amount
+                for bond in self.bonds:
+                    if bond.year == year:
+                        if bond.amount > left_over:
+                            bond.amount -= left_over
+                            left_over = 0.0
+                            break
+                        else:
+                           left_over -= bond.amount
+                           bond.amount = 0.0
+
+            self.bonds = [b for b in self.bonds if b.amount > 0.0]
+
+            self.withdrawn_per_year[year] += withdraw_amount
+            return left_over
+
+    def monthly_payment(self, year: int) -> float:
+        amount = 0.0
+        amount += self.tbills_amount * self._inflate_percent(year)/12
+        for bond in self.bonds:
+            amount += bond.monthly_payment(year)
+
+        self.taxable_income_per_year[year] += amount
+        return amount
+
+    def taxable_income(self, year: int) -> float:
+        return self.taxable_income_per_year[year]
+
+    def csv_header(self) -> str:
+        return f";Bond_total;TBills;5-y-rate;Note-0-amount;Note-0-rate;Note-1-amount;Note-1-rate;Note-2-amount;Note-2-rate;Note-3-amount;Note-3-rate;Note-4-amount;Note-4-rate;Bonds-pay;Bond-interest"
+
+    def csv_values(self, year: int) -> str:
+        output = f";${self.total_amount():,.2f};${self.tbills_amount:,.2f}"
+        output += f";{self.five_year_note_rate_by_year[year]*100:,.1f}%"
+
+        for bond_year in range(year + 1, year + 6):
+            amount = 0.0
+            rate = 0.0
+            count = 0
+            for bond in self.bonds:
+                if bond.year == bond_year:
+                    amount += bond.amount
+                    rate += bond.rate
+                    count += 1
+            if count != 0:
+                rate = rate / count
+            output += f";${amount:,.2f};{rate*100:,.1f}%"
+
+        output += f";${self.withdrawn_per_year[year]:,.2f};${self.taxable_income(year):,.2f}"
+
+        return output
+
+    def rebalance(self, year: int):
+        new_bond_amount = self._mature_bonds_amount(year)
+
+        if new_bond_amount > 0:
+            new_bond = Bond(new_bond_amount, self.five_year_note_rate_by_year[year], year + 5)
+            self.bonds.append(new_bond)
+        self.bonds = [b for b in self.bonds if b.year != year]
 
 class TaxableWithBasis:
 
@@ -109,22 +323,22 @@ class TaxableWithBasis:
         self.added_per_year = {}
         self.inflate_percent_by_year = {}
 
-    def _total_amount(self):
+    def total_amount(self):
         return self.amount_basis + self.amount_gains
 
     def __str__(self) -> str:
-        return f"{self.name}: ${self._total_amount():,.2f}"
+        return f"{self.name}: ${self.total_amount():,.2f}"
 
     def csv_header(self) -> str:
         return f";{self.name}-basis;{self.name}-gains;{self.name}-total;{self.name}-pay"
 
     def csv_values(self, year: int) -> str:
-        return f";${self.amount_basis:,.2f};${self.amount_gains:,.2f};${self._total_amount():,.2f};${self.withdraw_by_year(year) -  self.added_per_year.get(year, 0):,.2f}"
+        return f";${self.amount_basis:,.2f};${self.amount_gains:,.2f};${self.total_amount():,.2f};${self.withdraw_by_year(year) -  self.added_per_year.get(year, 0):,.2f}"
 
     def increase(self, year: int, month: int):
         current_date = year * 12 + (month - 1)
         while self.date < current_date:
-            self.amount_gains += self._total_amount() * _compound_monthly_interest(self._inflate_percent(year))
+            self.amount_gains += self.total_amount() * _compound_monthly_interest(self._inflate_percent(year))
             self.date += 1
 
     def set_inflate_percent_by_year(self, inflate_percent_by_year):
@@ -137,7 +351,7 @@ class TaxableWithBasis:
         return 0.0
 
     def cap_taxable_income(self, year: int) -> float:
-        if self.withdraw_by_year(year) > 0 and self._total_amount() > 0:
+        if self.withdraw_by_year(year) > 0 and self.total_amount() > 0:
             percentage_gains = self.amount_gains / (self.amount_basis + self.amount_gains)
             return self.withdraw_by_year(year) * percentage_gains
         else:
@@ -156,11 +370,14 @@ class TaxableWithBasis:
         else:
             self.withdrawn_per_year[year] -= amount
 
+    # Return the amount not covered by this account
     def withdraw(self, withdraw_amount: float, year: int) -> float:
         if withdraw_amount < 0.0:
             raise Exception(f"can not withdraw negative amounts: withdraw_amount: ${withdraw_amount:,.2f}")
-        if withdraw_amount > self._total_amount():
-            left_over = withdraw_amount - self._total_amount()
+        if self.total_amount() == 0.0:
+            return withdraw_amount
+        if withdraw_amount > self.total_amount():
+            left_over = withdraw_amount - self.total_amount()
             self.amount_basis = 0
             self.amount_gains = 0
             self.withdrawn_per_year[year] = (withdraw_amount - left_over) + self.withdrawn_per_year.get(year, 0)
@@ -245,6 +462,12 @@ class PostTax401kRateLimit(object):
         self.standard_deductions = standard_deductions
         self.pension_payment_by_year = {}
         self.percent_over_max = percent_over_max
+
+    def total_amount(self):
+        amount = 0
+        for account in self.accounts:
+            amount += account.total_amount()
+        return amount
 
     def csv_header(self) -> str:
         output = ""
