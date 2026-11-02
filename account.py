@@ -137,7 +137,7 @@ class FiveYearBondLadder:
         self.taxable_income_per_year = defaultdict(lambda: 0.0)
 
     def __str__(self) -> str:
-        return f"Bonds: ${self.total_amount:,.2f}"
+        return f"Bonds: ${self.total_amount():,.2f}"
 
     def _inflate_percent(self, year):
         if self.inflate_percent_by_year[year] > 0.0:

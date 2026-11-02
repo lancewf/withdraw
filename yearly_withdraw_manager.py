@@ -322,7 +322,7 @@ class BucketWithdrawManager:
         return output
 
     def csv(self, year: int) -> str:
-        output = f";${self.networth()}"
+        output = f";${self.networth():,.2f}"
         for acc in self.saving_accounts:
             output += f"{acc.csv_values(year)}"
 
@@ -365,6 +365,9 @@ class BucketWithdrawManager:
             amount = acc.withdraw(amount, year)
 
         for acc in self.pre_tax_accounts:
+            amount = acc.withdraw(amount, year)
+
+        for acc in self.bonds:
             amount = acc.withdraw(amount, year)
 
         return amount
@@ -448,6 +451,9 @@ class BucketWithdrawManager:
             amount = acc.withdraw(amount, year)
 
         for acc in self.pre_tax_accounts:
+            amount = acc.withdraw(amount, year)
+
+        for acc in self.bonds:
             amount = acc.withdraw(amount, year)
 
         return amount

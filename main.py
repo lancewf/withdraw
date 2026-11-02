@@ -25,32 +25,42 @@ def run():
 
 
 def run_with_year(start_historic_year):
-    manager, expenses, start_year = scenarios.inorder_rate_limit(start_historic_year)
+    manager, expenses, start_year = scenarios.buckets(start_historic_year)
 
     end_year = 2092
 
     taxes = 0.0
+    withdrawn_vs_networth = 0.0
     for year in range(start_year, end_year + 1):
         expenses.inflate(year)
         manager.inflate(year)
         manager.set_total_predicted_income_taxes(year)
         # jan 1st
-        yearly_income = expenses.amount(year)
+        yearly_income = expenses.amount(year, withdrawn_vs_networth)
         manager.pay_taxes(taxes, year)
+        withdrawn_amount = 0
         for month in range(1, 13):
             monthly_income = yearly_income / 12
             manager.increase(year, month)
             pension = manager.monthly_pension(year)
             monthly_income -= pension
             if monthly_income < 0:
-                return False
-            monthly_left_over = manager.withdraw(monthly_income, year)
-            if monthly_left_over > 0:
-                return False
+                manager.payment(monthly_income * -1, year)
+            else:
+                withdrawn_amount += monthly_income
+                monthly_left_over = manager.withdraw(monthly_income, year)
+                if monthly_left_over > 0:
+                    return False
+
+        if manager.networth() > 0:
+            withdrawn_vs_networth = withdrawn_amount / manager.networth()
+        else:
+            withdrawn_vs_networth = 0.0
 
         manager.conversions(year)
         manager.lump_sum_payments(year)
         taxes = manager.taxes(year).total()
+        manager.rebalancing(year)
 
     return True
 
